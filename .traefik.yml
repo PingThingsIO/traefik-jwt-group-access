@@ -1,0 +1,13 @@
+displayName: JWT Group Access
+type: middleware
+
+import: github.com/PingThingsIO/traefik-jwt-headers
+
+summary: "Traefik middleware plugin which checks that a JWT contains one of allowed groups"
+
+testData:
+  claimsPrefix: attr
+  allowGroups:
+    - admin
+    - test
+  groupProperty: "groups"
