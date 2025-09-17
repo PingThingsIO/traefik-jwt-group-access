@@ -10,14 +10,14 @@ import (
 )
 
 type Config struct {
-	AllowedGroups []string `json:"allowGroups,omitempty"`
+	AllowGroups   []string `json:"allowGroups,omitempty"`
 	ClaimsPrefix  string   `json:"claimsPrefix"`
 	GroupProperty string   `json:"groupProperty"`
 }
 
 func CreateConfig() *Config {
 	return &Config{
-		AllowedGroups: []string{},
+		AllowGroups: make([]string, 0),
 	}
 }
 
@@ -34,7 +34,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	return &JwtGroupAccess{
 		next:          next,
 		name:          name,
-		allowedGroups: config.AllowedGroups,
+		allowedGroups: config.AllowGroups,
 		claimsPrefix:  config.ClaimsPrefix,
 		groupProperty: config.GroupProperty,
 	}, nil
@@ -73,13 +73,38 @@ func (a *JwtGroupAccess) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			}
 		}
 
+		g, ok := claims[a.groupProperty].([]any)
+		if !ok {
+			log.Printf("ERROR EXTRACTING GROUPS: %+v %t", g, ok)
+
+			// Default closed on error
+			rw.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		// we should now have a []any in g
+		// cast it to []string item by item
+		groups := make([]string, len(g))
+		for i, v := range g {
+			x, ok := v.(string)
+			if !ok {
+				log.Printf("ERROR: COULD NOT CAST TO STRING: %+v", v)
+
+				// Default closed on error
+				rw.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+
+			groups[i] = x
+		}
+
+		// check if their in any group that's allowed through
 		groupAllowed := false
-		if groups, ok := claims[a.groupProperty].([]string); ok {
-			for _, group := range a.allowedGroups {
-				if slices.Contains(groups, group) {
-					groupAllowed = true
-					break
-				}
+		for _, group := range a.allowedGroups {
+			log.Printf("DEBUG: CHECKING GROUP: %s", group)
+			if slices.Contains(groups, group) {
+				groupAllowed = true
+				break
 			}
 		}
 
@@ -87,6 +112,7 @@ func (a *JwtGroupAccess) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		// or their token didn't contain a group property,
 		// deny request.
 		if !groupAllowed {
+			log.Println("GROUP NOT ONE OF ALLOWED GROUPS, FORBIDDEN")
 			rw.WriteHeader(http.StatusForbidden)
 			return
 		}
@@ -94,7 +120,10 @@ func (a *JwtGroupAccess) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		// if their group is allowed,
 		// pass on the request
 		a.next.ServeHTTP(rw, req)
+		return
 	}
+
+	log.Println("NO CLAIMS DETECTED, FALLTHROUGH")
 
 	// If there's no claims or we had an error above,
 	// reject the request. (DEFAULT FAIL)
